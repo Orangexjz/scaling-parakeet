@@ -23,14 +23,15 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libgmp-dev libssl-dev libsqlite3-dev cmake make g++ python3-dev
+          sudo apt-get install -y -qq libgmp-dev libssl-dev libsqlite3-dev cmake make g++ python3-dev python3-pip
+          sudo pip3 install flask --break-system-packages
       
       - name: Cache CADO-NFS binary
         id: cache-cado
         uses: actions/cache@v4
         with:
           path: /tmp/cado-nfs
-          key: cado-nfs-compiled-v1
+          key: cado-nfs-compiled-v2
       
       - name: Clone and compile CADO-NFS
         if: steps.cache-cado.outputs.cache-hit != 'true'
@@ -58,16 +59,12 @@ jobs:
       - name: Run factorization (5 hours)
         run: |
           cd /tmp/cado-nfs
-          timeout 18000 python3 cado-nfs.py \
-            --server-threads=2 \
-            --workdir=/tmp/cado-work \
-            --screenlog=INFO \
-            10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 || true
+          timeout 18000 python3 cado-nfs.py --server-threads=2 --workdir=/tmp/cado-work --screenlog=INFO 10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 || true
       
       - name: Check for factors
         run: |
           if [ -f /tmp/cado-work/factor.log ]; then
-            if grep -qE '^[pq]\\s*=\\s*\\d' /tmp/cado-work/factor.log; then
+            if grep -qE '^[pq][[:space:]]*=[[:space:]]*[0-9]' /tmp/cado-work/factor.log; then
               echo "FACTORIZATION_COMPLETE=true" >> $GITHUB_ENV
               echo "=== FACTORS FOUND ==="
               cat /tmp/cado-work/factor.log
