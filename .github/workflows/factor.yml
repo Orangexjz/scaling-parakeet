@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/cado-nfs
-          key: cado-nfs-compiled-v3
+          key: cado-nfs-compiled-v4
       
       - name: Clone and compile CADO-NFS
         if: steps.cache-cado.outputs.cache-hit != 'true'
@@ -41,24 +41,51 @@ jobs:
       - name: Restore workdir state
         uses: actions/cache@v4
         with:
-          path: /tmp/cado-work.tar.gz
+          path: /tmp/cado-work
           key: cado-work-i${{ matrix.instance }}-${{ github.run_id }}
           restore-keys: |
             cado-work-i${{ matrix.instance }}-
       
-      - name: Extract workdir
+      - name: Debug workdir state
         run: |
-          if [ -f /tmp/cado-work.tar.gz ]; then
-            cd /tmp && tar xzf cado-work.tar.gz
-            echo "Restored previous state"
-          else
-            echo "Fresh start"
+          echo "=== Workdir contents ==="
+          ls -la /tmp/cado-work/ 2>/dev/null || echo "No workdir found"
+          if [ -d /tmp/cado-work ]; then
+            du -sh /tmp/cado-work/
+            find /tmp/cado-work -name "*.checkpoint*" -o -name "*.log" 2>/dev/null | head -20
           fi
       
       - name: Run factorization (5 hours)
         run: |
           cd /tmp/cado-nfs
-          timeout 18000 python3 cado-nfs.py --server-threads=2 --workdir=/tmp/cado-work --screenlog=INFO 10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 || true
+          START_TIME=$(date +%s)
+          
+          # Run CADO-NFS with timeout, capture output
+          timeout 18000 python3 cado-nfs.py \
+            --server-threads=2 \
+            --workdir=/tmp/cado-work \
+            --screenlog=INFO \
+            10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 \
+            2>&1 | tee /tmp/cado-run.log || true
+          
+          END_TIME=$(date +%s)
+          ELAPSED=$((END_TIME - START_TIME))
+          echo "Factorization ran for ${ELAPSED} seconds"
+          
+          # If CADO-NFS exited in less than 60 seconds, something went wrong
+          if [ $ELAPSED -lt 60 ]; then
+            echo "WARNING: CADO-NFS exited too quickly (${ELAPSED}s). Possible resume failure."
+            echo "=== Last 50 lines of log ==="
+            tail -50 /tmp/cado-run.log
+            echo "=== Retrying with fresh workdir ==="
+            rm -rf /tmp/cado-work
+            timeout 18000 python3 cado-nfs.py \
+              --server-threads=2 \
+              --workdir=/tmp/cado-work \
+              --screenlog=INFO \
+              10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 \
+              2>&1 | tee /tmp/cado-run-fresh.log || true
+          fi
       
       - name: Check for factors
         run: |
@@ -69,10 +96,19 @@ jobs:
               cat /tmp/cado-work/factor.log
             fi
           fi
+          echo "=== Last 30 lines of CADO-NFS log ==="
+          tail -30 /tmp/cado-run.log 2>/dev/null || echo "No run log"
+          tail -30 /tmp/cado-run-fresh.log 2>/dev/null || true
       
-      - name: Compress workdir for caching
-        run: |
-          cd /tmp && tar czf cado-work.tar.gz cado-work/ 2>/dev/null || true
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cado-logs-i${{ matrix.instance }}
+          path: |
+            /tmp/cado-run.log
+            /tmp/cado-run-fresh.log
+          retention-days: 7
       
       - name: Create issue on success
         if: env.FACTORIZATION_COMPLETE == 'true'
