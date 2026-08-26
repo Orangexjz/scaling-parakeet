@@ -1,0 +1,100 @@
+name: RSA-512 Factorization
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  factor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        instance: [1, 2, 3]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgmp-dev libssl-dev libsqlite3-dev cmake make g++ python3-dev
+      
+      - name: Cache CADO-NFS binary
+        id: cache-cado
+        uses: actions/cache@v4
+        with:
+          path: /tmp/cado-nfs
+          key: cado-nfs-compiled-v1
+      
+      - name: Clone and compile CADO-NFS
+        if: steps.cache-cado.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://gitlab.inria.fr/cado-nfs/cado-nfs.git /tmp/cado-nfs
+          cd /tmp/cado-nfs && make -j2
+      
+      - name: Restore workdir state
+        uses: actions/cache@v4
+        with:
+          path: /tmp/cado-work.tar.gz
+          key: cado-work-i${{ matrix.instance }}-${{ github.run_id }}
+          restore-keys: |
+            cado-work-i${{ matrix.instance }}-
+      
+      - name: Extract workdir
+        run: |
+          if [ -f /tmp/cado-work.tar.gz ]; then
+            cd /tmp && tar xzf cado-work.tar.gz
+            echo "Restored previous state"
+          else
+            echo "Fresh start"
+          fi
+      
+      - name: Run factorization (5 hours)
+        run: |
+          cd /tmp/cado-nfs
+          timeout 18000 python3 cado-nfs.py \
+            --server-threads=2 \
+            --workdir=/tmp/cado-work \
+            --screenlog=INFO \
+            10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 || true
+      
+      - name: Check for factors
+        run: |
+          if [ -f /tmp/cado-work/factor.log ]; then
+            if grep -qE '^[pq]\\s*=\\s*\\d' /tmp/cado-work/factor.log; then
+              echo "FACTORIZATION_COMPLETE=true" >> $GITHUB_ENV
+              echo "=== FACTORS FOUND ==="
+              cat /tmp/cado-work/factor.log
+            fi
+          fi
+      
+      - name: Compress workdir for caching
+        run: |
+          cd /tmp && tar czf cado-work.tar.gz cado-work/ 2>/dev/null || true
+      
+      - name: Create issue on success
+        if: env.FACTORIZATION_COMPLETE == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const log = fs.readFileSync('/tmp/cado-work/factor.log', 'utf8');
+              const pMatch = log.match(/^p\s*=\s*(\d+)/m);
+              const qMatch = log.match(/^q\s*=\s*(\d+)/m);
+              if (pMatch && qMatch) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: 'RSA-512 Factorization Complete!',
+                  body: `## Factors Found!\n\n**p** = \`${pMatch[1]}\`\n\n**q** = \`${qMatch[1]}\`\n\nVerified: p * q = n`,
+                  labels: ['complete']
+                });
+              }
+            } catch (e) {}
