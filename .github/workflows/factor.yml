@@ -13,9 +13,9 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 10
       matrix:
-        instance: [1, 2, 3]
+        instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     
     steps:
       - uses: actions/checkout@v4
@@ -46,21 +46,11 @@ jobs:
           restore-keys: |
             cado-work-i${{ matrix.instance }}-
       
-      - name: Debug workdir state
-        run: |
-          echo "=== Workdir contents ==="
-          ls -la /tmp/cado-work/ 2>/dev/null || echo "No workdir found"
-          if [ -d /tmp/cado-work ]; then
-            du -sh /tmp/cado-work/
-            find /tmp/cado-work -name "*.checkpoint*" -o -name "*.log" 2>/dev/null | head -20
-          fi
-      
       - name: Run factorization (5 hours)
         run: |
           cd /tmp/cado-nfs
           START_TIME=$(date +%s)
           
-          # Run CADO-NFS with timeout, capture output
           timeout 18000 python3 cado-nfs.py \
             --server-threads=2 \
             --workdir=/tmp/cado-work \
@@ -72,12 +62,8 @@ jobs:
           ELAPSED=$((END_TIME - START_TIME))
           echo "Factorization ran for ${ELAPSED} seconds"
           
-          # If CADO-NFS exited in less than 60 seconds, something went wrong
           if [ $ELAPSED -lt 60 ]; then
-            echo "WARNING: CADO-NFS exited too quickly (${ELAPSED}s). Possible resume failure."
-            echo "=== Last 50 lines of log ==="
-            tail -50 /tmp/cado-run.log
-            echo "=== Retrying with fresh workdir ==="
+            echo "WARNING: CADO-NFS exited too quickly. Retrying with fresh workdir."
             rm -rf /tmp/cado-work
             timeout 18000 python3 cado-nfs.py \
               --server-threads=2 \
@@ -96,8 +82,7 @@ jobs:
               cat /tmp/cado-work/factor.log
             fi
           fi
-          echo "=== Last 30 lines of CADO-NFS log ==="
-          tail -30 /tmp/cado-run.log 2>/dev/null || echo "No run log"
+          tail -30 /tmp/cado-run.log 2>/dev/null || true
           tail -30 /tmp/cado-run-fresh.log 2>/dev/null || true
       
       - name: Upload logs as artifact
