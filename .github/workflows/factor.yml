@@ -13,9 +13,9 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 20
       matrix:
-        instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        instance: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     steps:
       - uses: actions/checkout@v4
@@ -50,27 +50,12 @@ jobs:
         run: |
           cd /tmp/cado-nfs
           START_TIME=$(date +%s)
-          
-          timeout 18000 python3 cado-nfs.py \
-            --server-threads=2 \
-            --workdir=/tmp/cado-work \
-            --screenlog=INFO \
-            10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 \
-            2>&1 | tee /tmp/cado-run.log || true
-          
+          timeout 18000 python3 cado-nfs.py --server-threads=2 --workdir=/tmp/cado-work --screenlog=INFO 10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 2>&1 | tee /tmp/cado-run.log || true
           END_TIME=$(date +%s)
           ELAPSED=$((END_TIME - START_TIME))
-          echo "Factorization ran for ${ELAPSED} seconds"
-          
           if [ $ELAPSED -lt 60 ]; then
-            echo "WARNING: CADO-NFS exited too quickly. Retrying with fresh workdir."
             rm -rf /tmp/cado-work
-            timeout 18000 python3 cado-nfs.py \
-              --server-threads=2 \
-              --workdir=/tmp/cado-work \
-              --screenlog=INFO \
-              10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 \
-              2>&1 | tee /tmp/cado-run-fresh.log || true
+            timeout 18000 python3 cado-nfs.py --server-threads=2 --workdir=/tmp/cado-work --screenlog=INFO 10024736378350098430227678016352798779292618882528367487303651597605344143601617599298224756928363135181060229840615610442456500936388901255076451726534989 2>&1 | tee /tmp/cado-run-fresh.log || true
           fi
       
       - name: Check for factors
@@ -78,22 +63,9 @@ jobs:
           if [ -f /tmp/cado-work/factor.log ]; then
             if grep -qE '^[pq][[:space:]]*=[[:space:]]*[0-9]' /tmp/cado-work/factor.log; then
               echo "FACTORIZATION_COMPLETE=true" >> $GITHUB_ENV
-              echo "=== FACTORS FOUND ==="
               cat /tmp/cado-work/factor.log
             fi
           fi
-          tail -30 /tmp/cado-run.log 2>/dev/null || true
-          tail -30 /tmp/cado-run-fresh.log 2>/dev/null || true
-      
-      - name: Upload logs as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cado-logs-i${{ matrix.instance }}
-          path: |
-            /tmp/cado-run.log
-            /tmp/cado-run-fresh.log
-          retention-days: 7
       
       - name: Create issue on success
         if: env.FACTORIZATION_COMPLETE == 'true'
